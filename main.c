@@ -4,39 +4,55 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <dirent.h>
+#include <string.h>
+#include <linux/limits.h>
+
+//FUNCIONES AUX:
+
+//Calcula md5
+char *calcularmd5(char *filename);
 
 
-void main(){
-	static const int cantProc=3;
-	int cantPipes=3;
-	int pipeFds[cantPipes*2];
+
+
+//MAIN:
+void main(int argc, char const *argv[]){
+	//Constantes
+	static const int CANT_PROC=3;
 	
+
+	//Array de pipes (file descriptors)
+	int pipeFds[CANT_PROC*2];
 	
+	//Variables
+	DIR * dirp;
+	struct  dirent * direntp;
 	int estado;
 	int numeroProceso;
 	pid_t pid;
 	pid_t wpid;
-	
-	
-	
-	
-	
-	
-    for(int i = 0; i < (cantPipes); i++){	//Se crean los n PIPES
+
+
+	//Se inicializan los pipes
+    for(int i = 0; i < (CANT_PROC); i++){	
         if(pipe(pipeFds + i*2) < 0) {
             perror("error en pipe");
             exit(EXIT_FAILURE);
         }
     }
-    
-    
-    for(int i = 0; i < (cantPipes); i++){	//Se escribe en los n PIPES
-        printf("PADRE: escribiendo en el pipe %d \n",i+1);
-		write(pipeFds[(i*2)+1],"test",5);
-    }
-    
+
+
+
+    //Abro el directorio sobre la ruta recibida por linea de comando
+	printf("Ruta seleccionada:%s\n",argv[1]);
+	dirp=opendir(argv[1]);
 	
-	for(numeroProceso=0;numeroProceso<cantProc;numeroProceso++){  		// Creacion de N procesos hijos
+    
+
+    //Se crean CANT_PROC procesos esclavos
+	
+	for(numeroProceso=0;numeroProceso<CANT_PROC;numeroProceso++){  		
 		pid = fork();
 		if(pid==0){														
 			break;
@@ -49,24 +65,119 @@ void main(){
 
 	
 	
-	if(pid==0){ // lógica de procesos escavo
-		/*for(int i=0;i<4;i++){
-			printf("Soy el proceso hijo numero %d, mi id es %d\n", numeroProceso, getpid());
-		}*/
-		char buf[30];
-		printf("HIJO %d: leyendo del pipe \n",numeroProceso);
-		read(pipeFds[2*numeroProceso],buf,5);
-		printf("HIJO %d: lei del bufer \"%s\"\n",numeroProceso,buf);
-		exit(0);
-	}else{
-		for(int i=0; i<cantProc;i++){
+	if(pid==0){ 							// Lógica de los procesos esclavo
+		char *ruta=(char *)argv[1];	
+		char path[PATH_MAX];
+		char buf2[NAME_MAX];
+		char * h;
+		
+		
+		close(pipeFds[(2*numeroProceso)+1]);
+		while(1){
+			char buf[NAME_MAX];
+			printf("HIJO %d: leyendo del pipe \n",numeroProceso);
+			read(pipeFds[2*numeroProceso],buf,NAME_MAX);
+			printf("HIJO %d: leyendo el archivo de nombre %s y mi id es %d\n",numeroProceso,buf,getpid());	
+			if(strcmp(buf,"Bye")==0){
+				exit(0);
+			}	
+
+			//Genero la ruta del archivo a procesar
+			strcpy(path,ruta);			
+			strcpy(buf2,buf);			
+			strcat(path,buf2);
+			printf("HIJO %d: ruta completa %s\n",numeroProceso,path);
+			
+			//Calculo md5
+			h=calcularmd5(path);
+			printf("HIJO %d: hash---> %s\n",numeroProceso,h);
+
+		}	
+		
+		
+
+	}else{		// Lògica del proceso padre
+		
+		
+		//Cierro todos los extremos de lectura
+		for (int i = 0; i < CANT_PROC; i++){
+			close(pipeFds[2*i]);
+		}
+		
+		
+	
+
+		//Distribuyo los archivos en todos los pipes
+		int count=0;
+		int actual;
+		while((direntp=readdir(dirp))!=NULL){
+			//Calculo a que pipe le corresponde
+			actual=count%CANT_PROC;
+
+			if((strcmp(direntp->d_name,".")!=0) && (strcmp(direntp->d_name,"..")!=0)){	
+				
+				printf("PADRE: escribiendo %s\n",direntp->d_name );
+				write(pipeFds[(actual*2)+1],direntp->d_name,NAME_MAX);
+
+			}
+			count++;
+		}
+
+		
+		//Bye hijos
+		for (int i = 0; i < CANT_PROC; i++){
+			write(pipeFds[(2*i)+1],"Bye",NAME_MAX);
+		}
+
+		//Cierro todos los extremos de escritura
+		for (int i = 0; i < CANT_PROC; i++){
+			close(pipeFds[(2*i)+1]);
+		}
+
+		
+		//Padre espera la finalizacion de todos los esclavos
+		for(int i=0; i<CANT_PROC;i++){
 			if((wpid=wait(NULL))>=0){
-				//printf("Proceso %d terminado\n",wpid);
+				printf("Proceso %d terminado\n",wpid);
 			}
 		}
 	
-		printf("Soy el padre, mi id es %d\n",getpid());
 	}
 
 	
 }	
+
+
+//FUNCIONES AUXILIARES:
+
+
+char *calcularmd5(char *filename){
+
+	FILE *fp;
+	char *command;
+	char *hash;
+	char pipedata[PIPE_BUF];
+	int size;
+	int status;
+
+    size = strlen(filename) + 5;
+    command = malloc(size);
+	hash 	= malloc(132);
+	
+	//Armo comando shell
+	strcpy(command, "md5sum ");
+	strcat(command, filename);
+
+	//Abro pipe que queda conectado con el comando md5sum
+	fp = popen(command, "r");
+	if (fp == NULL);
+	
+	//leo todo lo devuelto por el comando md5sum
+	while (fgets(pipedata, PIPE_BUF, fp) != NULL){
+		strcat(hash, pipedata);
+	}
+
+	pclose(fp);
+	return hash;
+}
+
