@@ -7,23 +7,33 @@
 #include <dirent.h>
 #include <string.h>
 #include <linux/limits.h>
+#include <pthread.h>
 
 //FUNCIONES AUX:
 
-//Calcula md5
 char *calcularmd5(char *filename);
+void *funThreadEsclavos (void *parametro);
+void *funThreadVistas (void *parametro);
 
+
+//Pipe esclavos->padre, global para ser visto desde los threads
+int pipeEP[2];
+//Constantes globales
+static const int CANT_PROC=3;
 
 
 
 //MAIN:
 void main(int argc, char const *argv[]){
-	//Constantes
-	static const int CANT_PROC=3;
-	
+	if(argv[1]==NULL){
+        perror("ERROR: Ingrese una path por linea de comando para comenzar a procesar");
+        exit(EXIT_FAILURE);
+    }
+
 
 	//Array de pipes (file descriptors)
 	int pipeFds[CANT_PROC*2];
+
 	
 	//Variables
 	DIR * dirp;
@@ -33,6 +43,7 @@ void main(int argc, char const *argv[]){
 	pid_t pid;
 	pid_t wpid;
 
+	
 
 	//Se inicializan los pipes
     for(int i = 0; i < (CANT_PROC); i++){	
@@ -42,12 +53,31 @@ void main(int argc, char const *argv[]){
         }
     }
 
-
+    if(pipe(pipeEP) < 0) {
+        perror("error en pipe");
+        exit(EXIT_FAILURE);
+    }
 
     //Abro el directorio sobre la ruta recibida por linea de comando
 	printf("Ruta seleccionada:%s\n",argv[1]);
 	dirp=opendir(argv[1]);
 	
+
+	//Se lanzan los threads que controlan la vista y el resultado de los esclavos
+	pthread_t idThreadEsclavos;
+	pthread_t idThreadVista;
+
+	if (pthread_create(&idThreadEsclavos, NULL, funThreadEsclavos, NULL) != 0){
+		perror ("No puedo crear thread");
+		exit (-1);
+	}
+
+
+	/*if (pthread_create(&idThreadVista, NULL, funThreadVistas, NULL) != 0){
+		perror ("No puedo crear thread");
+		exit (-1);
+	}*/
+
     
 
     //Se crean CANT_PROC procesos esclavos
@@ -79,6 +109,10 @@ void main(int argc, char const *argv[]){
 			read(pipeFds[2*numeroProceso],buf,NAME_MAX);
 			printf("HIJO %d: leyendo el archivo de nombre %s y mi id es %d\n",numeroProceso,buf,getpid());	
 			if(strcmp(buf,"Bye")==0){
+				close(pipeFds[2*numeroProceso]);
+				//Bye pipeEP
+				write(pipeEP[1],"Bye",NAME_MAX);
+				close(pipeEP[1]);
 				exit(0);
 			}	
 
@@ -91,6 +125,11 @@ void main(int argc, char const *argv[]){
 			//Calculo md5
 			h=calcularmd5(path);
 			printf("HIJO %d: hash---> %s\n",numeroProceso,h);
+
+			//Envio resultado al padre
+			close(pipeEP[0]);
+			printf("HIJO %d: envio resultado\n",numeroProceso);			
+			write(pipeEP[1],h,NAME_MAX);
 
 		}	
 		
@@ -105,8 +144,6 @@ void main(int argc, char const *argv[]){
 		}
 		
 		
-	
-
 		//Distribuyo los archivos en todos los pipes
 		int count=0;
 		int actual;
@@ -129,6 +166,7 @@ void main(int argc, char const *argv[]){
 			write(pipeFds[(2*i)+1],"Bye",NAME_MAX);
 		}
 
+
 		//Cierro todos los extremos de escritura
 		for (int i = 0; i < CANT_PROC; i++){
 			close(pipeFds[(2*i)+1]);
@@ -141,7 +179,9 @@ void main(int argc, char const *argv[]){
 				printf("Proceso %d terminado\n",wpid);
 			}
 		}
-	
+		
+		//Padre espera la finalizacion del hilo1
+		pthread_join(idThreadEsclavos,NULL);
 	}
 
 	
@@ -181,3 +221,31 @@ char *calcularmd5(char *filename){
 	return hash;
 }
 
+
+
+void * funThreadEsclavos (void *parametro){
+	char bufH[NAME_MAX];
+	int contador=0;
+	while (1){
+		sleep(1);
+		read(pipeEP[0],bufH,NAME_MAX);
+		if(strcmp(bufH,"Bye")==0){
+				contador++;
+				if(contador==CANT_PROC){ //Si todos los procesos terminaron de esribir, cierro el pipe
+					close(pipeEP[0]);
+					break;	
+				}				
+			}		
+		printf ("HILO 1: Leo resultado%s\n",bufH);
+	}
+	printf ("HILO 1: Listo se recolectaron todos los resultados\n");
+}
+
+
+void * funThreadVistas (void *parametro){
+	while (1){
+		sleep(1);
+		printf ("Hilo espera vistas\n");
+	}
+
+}
