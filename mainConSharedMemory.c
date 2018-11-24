@@ -10,7 +10,9 @@
 #include <pthread.h>
 #include <sys/ipc.h> 
 #include <sys/shm.h> 
-
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <fcntl.h>
 
 
 //FUNCIONES AUX:
@@ -25,7 +27,8 @@ int pipeEP[2];
 //Constantes globales
 static const int CANT_PROC=3;
 
-
+#define FIFO_NAME "fifoForViewProcess"
+#define SHRM_NAME "sharedMemForViewProcess"
 
 //MAIN:
 void main(int argc, char const *argv[]){
@@ -77,10 +80,10 @@ void main(int argc, char const *argv[]){
 	}
 
 
-	/*if (pthread_create(&idThreadVista, NULL, funThreadVistas, NULL) != 0){
+	if (pthread_create(&idThreadVista, NULL, funThreadVistas, NULL) != 0){
 		perror ("No puedo crear thread");
 		exit (-1);
-	}*/
+	}
 
     
 
@@ -231,13 +234,13 @@ void * funThreadEsclavos (void *parametro){
 	char bufH[NAME_MAX];
 	int contador=0;
 
-	// ftok to generate unique key 
-	key_t key = ftok("shmfile",65); 
+	//generamos clave unica 
+	key_t key = ftok(SHRM_NAME,65); 
 
-	// shmget returns an identifier in shmid 
+	//creamos un id a partir de la clave 
 	int shmid = shmget(key,1024,0666|IPC_CREAT); 
 
-	// shmat to attach to shared memory 
+	//attach to shared memory 
 	char *str = (char*) shmat(shmid,(void*)0,0); 	
  	
 	while (1){
@@ -262,9 +265,34 @@ void * funThreadEsclavos (void *parametro){
 
 
 void * funThreadVistas (void *parametro){
+	int fileDescriptorFifoView;
+	char id[50];
+
+
 	while (1){
 		sleep(1);
 		printf ("Hilo espera vistas\n");
+		printf(">>>>>>>>>>>>>>>>>Hilo Vista<<<<<<<<<<<<<<<<\n");
+
+		//Creamos el named pipe
+	    mknod(FIFO_NAME, S_IFIFO | 0666, 0);
+
+		//Para escritura sin bloqueo	
+		fileDescriptorFifoView = open(FIFO_NAME, O_WRONLY|O_NONBLOCK);
+	
+		//recuperamos el id del segmento de memoria compartida
+		//generamos clave unica 
+		key_t key = ftok(SHRM_NAME,65); 
+
+		//creamos un id a partir de la clave 
+		int shmid = shmget(key,1024,0666|IPC_CREAT); 
+		
+		//convertimos el id de formato entero a string
+		memset(id,0,sizeof(id));
+		sprintf(id,"%d",shmid);
+		printf("Id (string): %s \n", id);		
+
+		write(fileDescriptorFifoView, id, strlen(id));			
 	}
 
 }
