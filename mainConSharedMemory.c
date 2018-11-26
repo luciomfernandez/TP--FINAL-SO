@@ -287,11 +287,15 @@ void * funThreadVistas (void *parametro){
 		//creamos un id a partir de la clave 
 		int shmid = shmget(key,1024,0666|IPC_CREAT); 
 		
-		//convertimos el id de formato entero a string
+		//Limpiamos el string id
 		memset(id,0,sizeof(id));
+		//convertimos el id de formato entero a string
 		sprintf(id,"%d",shmid);
+		
+		//Lo imprimimos a modo informativo
 		printf("Id (string): %s \n", id);		
-
+		
+		//Lo escribimos en el named pipe
 		write(fileDescriptorFifoView, id, strlen(id));			
 	}
 
