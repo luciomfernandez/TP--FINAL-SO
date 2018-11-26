@@ -19,7 +19,7 @@ void *funThreadVistas (void *parametro);
 //Pipe esclavos->padre, global para ser visto desde los threads
 int pipeEP[2];
 //Constantes globales
-static const int CANT_PROC=3;
+static int CANT_PROC=3;
 
 
 
@@ -29,6 +29,9 @@ void main(int argc, char const *argv[]){
         perror("ERROR: Ingrese una path por linea de comando para comenzar a procesar");
         exit(EXIT_FAILURE);
     }
+	if (argv[2] != NULL) {
+		sscanf(argv[2], "%d", &CANT_PROC);
+	}
 
 
 	//Array de pipes (file descriptors)
@@ -109,6 +112,7 @@ void main(int argc, char const *argv[]){
 			read(pipeFds[2*numeroProceso],buf,NAME_MAX);
 			printf("HIJO %d: leyendo el archivo de nombre %s y mi id es %d\n",numeroProceso,buf,getpid());	
 			if(strcmp(buf,"Bye")==0){
+			printf("----------------------------------------------------------\n");
 				close(pipeFds[2*numeroProceso]);
 				//Bye pipeEP
 				write(pipeEP[1],"Bye",NAME_MAX);
