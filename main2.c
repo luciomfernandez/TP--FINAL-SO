@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <fcntl.h>
+#include <semaphore.h>
 
 
 //FUNCIONES AUX:
@@ -20,6 +21,7 @@
 char *calcularmd5(char *filename);
 void *funThreadEsclavos (void *parametro);
 void *funThreadVistas (void *parametro);
+void my_handler(int sig);
 
 
 //Pipe esclavos->padre, global para ser visto desde los threads
@@ -187,8 +189,9 @@ void main(int argc, char const *argv[]){
 			}
 		}
 		
-		//Padre espera la finalizacion del hilo1
+		//Padre espera la finalizacion del HILO 1 E HILO 2
 		pthread_join(idThreadEsclavos,NULL);
+		pthread_join(idThreadVista,NULL);
 	}
 
 	
@@ -253,7 +256,10 @@ void * funThreadEsclavos (void *parametro){
 					break;	
 				}				
 			}	else { 
+					
+					//INICIO SECCION CRITICA!!
 					strcat(str, bufH); // si no viene el string "Bye" escribo en memoria compartida
+					//FIN SECCION CRITICA!!
 		} 	
 		printf ("HILO 1: Leo resultado%s\n",bufH);
 	}
@@ -268,19 +274,23 @@ void * funThreadVistas (void *parametro){
 	int fileDescriptorFifoView;
 	char id[50];
 
+	//Preparamos el handler la señal
+	signal(SIGUSR1, my_handler);
+	
+	//Creamos el named pipe
+	mknod(FIFO_NAME, S_IFIFO | 0666, 0);
 
 	while (1){
 		sleep(1);
-		printf ("Hilo espera vistas\n");
-		printf(">>>>>>>>>>>>>>>>>Hilo Vista<<<<<<<<<<<<<<<<\n");
+		printf ("HILO 2: espera vista\n");
+		
 
-		//Creamos el named pipe
-	    mknod(FIFO_NAME, S_IFIFO | 0666, 0);
-
+		//Aca va un semaforo que sera liberado por el handler!
+		
 		//Para escritura sin bloqueo	
 		fileDescriptorFifoView = open(FIFO_NAME, O_WRONLY|O_NONBLOCK);
 	
-		//recuperamos el id del segmento de memoria compartida
+		//Recuperamos el id del segmento de memoria compartida
 		//generamos clave unica 
 		key_t key = ftok(SHRM_NAME,65); 
 
@@ -289,14 +299,21 @@ void * funThreadVistas (void *parametro){
 		
 		//Limpiamos el string id
 		memset(id,0,sizeof(id));
+		
 		//convertimos el id de formato entero a string
 		sprintf(id,"%d",shmid);
 		
 		//Lo imprimimos a modo informativo
-		printf("Id (string): %s \n", id);		
+		printf("HILO 2: Id (string): %s \n", id);		
 		
 		//Lo escribimos en el named pipe
 		write(fileDescriptorFifoView, id, strlen(id));			
 	}
 
+}
+
+
+void my_handler(int sig){
+	printf("HANDLER: Eh sido interrumpido por la señal: %d\n",sig);
+	//ENVIA SEÑAL AL SEMAFORO DEL HILO!
 }
