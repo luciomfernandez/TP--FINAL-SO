@@ -314,6 +314,6 @@ void * funThreadVistas (void *parametro){
 
 
 void my_handler(int sig){
-	printf("HANDLER: Eh sido interrumpido por la señal: %d\n",sig);
+	printf("HANDLER: He sido interrumpido por la señal: %d\n",sig);
 	//ENVIA SEÑAL AL SEMAFORO DEL HILO!
 }
