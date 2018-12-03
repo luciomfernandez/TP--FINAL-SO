@@ -14,7 +14,9 @@
 #include <sys/types.h>
 #include <fcntl.h>
 #include <semaphore.h>
-
+#define FIFO_NAME "fifoForView"
+#define SHRM_PATH "/tmp"
+#define BUFFER_SIZE 2048
 
 //FUNCIONES AUX:
 
@@ -22,6 +24,7 @@ char *calcularmd5(char *filename);
 void *funThreadEsclavos (void *parametro);
 void *funThreadVistas (void *parametro);
 void my_handler(int sig);
+void my_handler_2(int sig);
 
 
 //Pipe esclavos->padre, global para ser visto desde los threads
@@ -29,8 +32,24 @@ int pipeEP[2];
 //Constantes globales
 static const int CANT_PROC=3;
 
-#define FIFO_NAME "fifoForViewProcess"
-#define SHRM_NAME "sharedMemForViewProcess"
+
+
+//Semaforos
+sem_t* mutex;
+sem_t* sem_p;
+sem_t* sem_c;
+sem_t sem_new_vista;
+sem_t sem_fin_vista;
+
+//Id memoria compartida
+int shmid;
+int shmid_mutex;
+int shmid_sem_p;
+int shmid_sem_c;
+
+//Segmento de memoria compartida
+char * data;
+
 
 //MAIN:
 void main(int argc, char const *argv[]){
@@ -52,7 +71,9 @@ void main(int argc, char const *argv[]){
 	pid_t pid;
 	pid_t wpid;
 
-	
+	//Init semaforo
+	sem_init(&sem_new_vista,0,0);
+	sem_init(&sem_fin_vista,0,0);
 
 	//Se inicializan los pipes
     for(int i = 0; i < (CANT_PROC); i++){	
@@ -192,6 +213,20 @@ void main(int argc, char const *argv[]){
 		//Padre espera la finalizacion del HILO 1 E HILO 2
 		pthread_join(idThreadEsclavos,NULL);
 		pthread_join(idThreadVista,NULL);
+	
+
+		//detach from shared memory  
+	    shmdt(sem_p); 
+	    shmdt(mutex);
+		shmdt(sem_c); 
+	    shmdt(data); 
+		//destroy the shared memory
+	    shmctl(shmid_sem_p,IPC_RMID,NULL);	 
+	    shmctl(shmid_mutex,IPC_RMID,NULL);
+	    shmctl(shmid_sem_c,IPC_RMID,NULL);
+		shmctl(shmid,IPC_RMID,NULL);
+
+		printf("Fin\n");
 	}
 
 	
@@ -237,36 +272,89 @@ void * funThreadEsclavos (void *parametro){
 	char bufH[NAME_MAX];
 	int contador=0;
 
-	//generamos clave unica 
-	key_t key = ftok(SHRM_NAME,65); 
+	key_t key_sem_mutex;
+    key_t key_sem_p;
+    key_t key_sem_c;
+    key_t key_shrm;
+    
+    //Creamos segmento de memoria compartida entre procesos para el buffer
+    key_shrm = ftok(SHRM_PATH,'Z');
+    shmid = shmget(key_shrm,BUFFER_SIZE,0666|IPC_CREAT);
+    printf("Cree el seg: %d\n", shmid);
+	//Creamos memoria compartida para el mutex 
+    key_sem_mutex = ftok(SHRM_PATH,'S');
+    shmid_mutex = shmget(key_sem_mutex,sizeof(sem_t),0666|IPC_CREAT);
 
-	//creamos un id a partir de la clave 
-	int shmid = shmget(key,1024,0666|IPC_CREAT); 
+    //Creamos memoria compartida para el semaforo produtor 
+    key_sem_p = ftok(SHRM_PATH,'A');	
+    shmid_sem_p = shmget(key_sem_p,sizeof(sem_t),0666|IPC_CREAT);
 
-	//attach to shared memory 
-	char *str = (char*) shmat(shmid,(void*)0,0); 	
+    //Creamos memoria compartida para el semaforo consumidor 
+    key_sem_c = ftok(SHRM_PATH,'B');	
+    shmid_sem_c = shmget(key_sem_c,sizeof(sem_t),0666|IPC_CREAT);
+
+
+    //Attach to shared memory 
+	data  = (char*) shmat(shmid,(void*)0,0);    
+    mutex = (sem_t*) shmat(shmid_mutex,(void*)0,0);
+    sem_p =	(sem_t*) shmat(shmid_sem_p,(void*)0,0);
+    sem_c = (sem_t*) shmat(shmid_sem_c,(void*)0,0);
+
+
+	//Init semaforos   	
+	sem_init(mutex,1,1);
+	sem_init(sem_p,1,BUFFER_SIZE);
+	sem_init(sem_c,1,0);
+
+ 	
+ 	int i=0;
  	
 	while (1){
 		sleep(1);
 		read(pipeEP[0],bufH,NAME_MAX);
 		if(strcmp(bufH,"Bye")==0){
-				contador++;
-				if(contador==CANT_PROC){ //Si todos los procesos terminaron de esribir, cierro el pipe
-					close(pipeEP[0]);
-					break;	
-				}				
-			}	else { 
-					
-					//INICIO SECCION CRITICA!!
-					strcat(str, bufH); // si no viene el string "Bye" escribo en memoria compartida
-					//FIN SECCION CRITICA!!
+			contador++;
+			if(contador==CANT_PROC){ //Si todos los procesos terminaron de esribir, cierro el pipe
+				close(pipeEP[0]);
+				break;	
+			}				
+		}else{ 
+			//Agregamos resultado al buffer
+			for(int j=0;j<strlen(bufH);j++){	
+				sem_wait(sem_p);
+				sem_wait(mutex);
+
+				data[i%BUFFER_SIZE]=bufH[j];
+				i++;
+
+				sem_post(mutex);
+				sem_post(sem_c);
+			}
+			
+			sem_wait(sem_p);
+			sem_wait(mutex);	
+
+			data[i%BUFFER_SIZE]='\n';
+			i++;
+
+			sem_post(mutex);
+			sem_post(sem_c);
 		} 	
 		printf ("HILO 1: Leo resultado%s\n",bufH);
 	}
 	printf ("HILO 1: Listo se recolectaron todos los resultados\n");
 	
+	//Escribimos caracter especial para finalizar lectura del buffer compartido
+	sem_wait(sem_p);
+	sem_wait(mutex);
+
+	data[i%BUFFER_SIZE]='\a';
+
+	sem_post(mutex);
+	sem_post(sem_c);
+
 	//detach from shared memory 
-	shmdt(str); 
+	shmdt(data); 
 }
 
 
@@ -276,44 +364,52 @@ void * funThreadVistas (void *parametro){
 
 	//Preparamos el handler la señal
 	signal(SIGUSR1, my_handler);
+	signal(SIGUSR2, my_handler_2);
 	
 	//Creamos el named pipe
 	mknod(FIFO_NAME, S_IFIFO | 0666, 0);
 
-	while (1){
-		sleep(1);
-		printf ("HILO 2: espera vista\n");
-		
 
-		//Aca va un semaforo que sera liberado por el handler!
-		
-		//Para escritura sin bloqueo	
-		fileDescriptorFifoView = open(FIFO_NAME, O_WRONLY|O_NONBLOCK);
+	sleep(1);
+	printf ("HILO 2: espera vista\n");
+	//Sem espera nueva vista
+	sem_wait(&sem_new_vista);
+	printf ("HILO 2: se ah detectado nueva vista\n");
 	
-		//Recuperamos el id del segmento de memoria compartida
-		//generamos clave unica 
-		key_t key = ftok(SHRM_NAME,65); 
 
-		//creamos un id a partir de la clave 
-		int shmid = shmget(key,1024,0666|IPC_CREAT); 
-		
-		//Limpiamos el string id
-		memset(id,0,sizeof(id));
-		
-		//convertimos el id de formato entero a string
-		sprintf(id,"%d",shmid);
-		
-		//Lo imprimimos a modo informativo
-		printf("HILO 2: Id (string): %s \n", id);		
-		
-		//Lo escribimos en el named pipe
-		write(fileDescriptorFifoView, id, strlen(id));			
-	}
+	//Recuperamos el id del segmento de memoria compartida
+	key_t key = ftok(SHRM_PATH,'Z');  
+	int shmid = shmget(key,1024,0666|IPC_CREAT); 
+	
+	//Limpiamos el string id y convertimos a string
+	memset(id,0,sizeof(id));
+	sprintf(id,"%d",shmid);
+	
+	//Lo imprimimos a modo informativo
+	printf("HILO 2: Id (string): %s \n", id);		
+	
+	
+	//Para escritura sin bloqueo	
+	fileDescriptorFifoView = open(FIFO_NAME, O_WRONLY);
+	//Lo escribimos en el named pipe
+	write(fileDescriptorFifoView, &shmid, sizeof(shmid));			
 
+	printf("Esperamos que termine vista\n");
+	//Esperamos que termine la vista
+	sem_wait(&sem_fin_vista);
+
+	//close(fileDescriptorFifoView);
 }
 
 
 void my_handler(int sig){
 	printf("HANDLER: He sido interrumpido por la señal: %d\n",sig);
-	//ENVIA SEÑAL AL SEMAFORO DEL HILO!
+	sem_post(&sem_new_vista);
+}
+
+
+
+void my_handler_2(int sig){
+	printf("HANDLER 2: Vista finalizada\n");
+	sem_post(&sem_fin_vista);
 }
