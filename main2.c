@@ -50,6 +50,11 @@ int shmid_sem_c;
 //Segmento de memoria compartida
 char * data;
 
+//ruta para creacion de archivo local con los hashes
+char *hashDataPath;
+
+// create a FILE typed pointer
+FILE *file_pointer; 
 
 //MAIN:
 void main(int argc, char const *argv[]){
@@ -58,7 +63,18 @@ void main(int argc, char const *argv[]){
         exit(EXIT_FAILURE);
     }
 
+		if(argv[2]==NULL){
+        perror("ERROR: Ingrese path para crear archivo con resultado de proceso");
+        exit(EXIT_FAILURE);
+    }
 
+	//Asigna
+	hashDataPath = (char *)argv[2];
+	
+	printf("path archivo %s ", hashDataPath );
+	// open the file "name_of_file.txt" for writing
+	file_pointer = fopen(hashDataPath, "w"); 
+	
 	//Array de pipes (file descriptors)
 	int pipeFds[CANT_PROC*2];
 
@@ -226,6 +242,9 @@ void main(int argc, char const *argv[]){
 	    shmctl(shmid_sem_c,IPC_RMID,NULL);
 		shmctl(shmid,IPC_RMID,NULL);
 
+	// Close the file
+	fclose(file_pointer); 
+	
 		printf("Fin\n");
 	}
 
@@ -319,6 +338,9 @@ void * funThreadEsclavos (void *parametro){
 				break;	
 			}				
 		}else{ 
+			// Write to the file
+			fprintf(file_pointer, bufH);
+			
 			//Agregamos resultado al buffer
 			for(int j=0;j<strlen(bufH);j++){	
 				sem_wait(sem_p);
