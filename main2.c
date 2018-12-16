@@ -21,8 +21,8 @@
 //FUNCIONES AUX:
 
 char *calcularmd5(char *filename);
-void *funThreadEsclavos (void *parametro);
-void *funThreadVistas (void *parametro);
+void *thread_maneja_buffer (void *parametro);
+void *thread_espera_vista (void *parametro);
 void my_handler(int sig);
 void my_handler_2(int sig);
 
@@ -31,7 +31,6 @@ void my_handler_2(int sig);
 int pipeEP[2];
 //Constantes globales
 static const int CANT_PROC=3;
-
 
 
 //Semaforos
@@ -50,14 +49,29 @@ int shmid_sem_c;
 //Segmento de memoria compartida
 char * data;
 
-//ruta para creacion de archivo local con los hashes
+//Ruta para creacion de archivo local con los hashes
 char *hashDataPath;
 
-// create a FILE typed pointer
+// Archivo de salida
 FILE *file_pointer; 
 
 //MAIN:
 void main(int argc, char const *argv[]){
+	//Variables
+	DIR * dirp;
+	struct  dirent * direntp;
+	int estado;
+	int numeroProceso;
+	pid_t pid;
+	pid_t wpid;	
+	pthread_t idThreadEsclavos;
+	pthread_t idThreadVista;
+
+	//Array de pipes (file descriptors)
+	int pipeFds[CANT_PROC*2];
+
+
+	//Se valida la entrada
 	if(argv[1]==NULL){
         perror("ERROR: Ingrese una path por linea de comando para comenzar a procesar");
         exit(EXIT_FAILURE);
@@ -68,30 +82,22 @@ void main(int argc, char const *argv[]){
         exit(EXIT_FAILURE);
     }
 
-	//Asigna
+	//Asigna output y abre archivo de salida para escritura
 	hashDataPath = (char *)argv[2];
-	
-	printf("path archivo %s ", hashDataPath );
-	// open the file "name_of_file.txt" for writing
 	file_pointer = fopen(hashDataPath, "w"); 
-	
-	//Array de pipes (file descriptors)
-	int pipeFds[CANT_PROC*2];
+	printf("Path archivo output: %s ", hashDataPath );	
 
-	
-	//Variables
-	DIR * dirp;
-	struct  dirent * direntp;
-	int estado;
-	int numeroProceso;
-	pid_t pid;
-	pid_t wpid;
+	//Se abre el directorio de entrada
+	printf("Path input:%s\n",argv[1]);
+	dirp=opendir(argv[1]);
 
-	//Init semaforo
+
+	//Se inicializan los semaforos 
 	sem_init(&sem_new_vista,0,0);
 	sem_init(&sem_fin_vista,0,0);
 
-	//Se inicializan los pipes
+
+	//Se inicializan los pipes PADRE->HIJOS
     for(int i = 0; i < (CANT_PROC); i++){	
         if(pipe(pipeFds + i*2) < 0) {
             perror("error en pipe");
@@ -104,22 +110,17 @@ void main(int argc, char const *argv[]){
         exit(EXIT_FAILURE);
     }
 
-    //Abro el directorio sobre la ruta recibida por linea de comando
-	printf("Ruta seleccionada:%s\n",argv[1]);
-	dirp=opendir(argv[1]);
 	
 
 	//Se lanzan los threads que controlan la vista y el resultado de los esclavos
-	pthread_t idThreadEsclavos;
-	pthread_t idThreadVista;
 
-	if (pthread_create(&idThreadEsclavos, NULL, funThreadEsclavos, NULL) != 0){
+	if (pthread_create(&idThreadEsclavos, NULL, thread_maneja_buffer, NULL) != 0){
 		perror ("No puedo crear thread");
 		exit (-1);
 	}
 
 
-	if (pthread_create(&idThreadVista, NULL, funThreadVistas, NULL) != 0){
+	if (pthread_create(&idThreadVista, NULL, thread_espera_vista, NULL) != 0){
 		perror ("No puedo crear thread");
 		exit (-1);
 	}
@@ -162,17 +163,17 @@ void main(int argc, char const *argv[]){
 				exit(0);
 			}	
 
-			//Genero la ruta del archivo a procesar
+			//Se genera la ruta del archivo a procesar
 			strcpy(path,ruta);			
 			strcpy(buf2,buf);			
 			strcat(path,buf2);
 			printf("HIJO %d: ruta completa %s\n",numeroProceso,path);
 			
-			//Calculo md5
+			//Se calcula el hash md5 del archivo
 			h=calcularmd5(path);
 			printf("HIJO %d: hash---> %s\n",numeroProceso,h);
 
-			//Envio resultado al padre
+			//Se envia el resultado obtenido al padre mediante el pipe ESCLAVO->PADRE
 			close(pipeEP[0]);
 			printf("HIJO %d: envio resultado\n",numeroProceso);			
 			write(pipeEP[1],h,NAME_MAX);
@@ -184,17 +185,17 @@ void main(int argc, char const *argv[]){
 	}else{		// Lògica del proceso padre
 		
 		
-		//Cierro todos los extremos de lectura
+		//Se cierran los extremos de lectura de todos los PIPES
 		for (int i = 0; i < CANT_PROC; i++){
 			close(pipeFds[2*i]);
 		}
 		
 		
-		//Distribuyo los archivos en todos los pipes
+		//Se distribuyen los archivos en los PIPES
 		int count=0;
 		int actual;
 		while((direntp=readdir(dirp))!=NULL){
-			//Calculo a que pipe le corresponde
+			
 			actual=count%CANT_PROC;
 
 			if((strcmp(direntp->d_name,".")!=0) && (strcmp(direntp->d_name,"..")!=0)){	
@@ -207,43 +208,43 @@ void main(int argc, char const *argv[]){
 		}
 
 		
-		//Bye hijos
+		//El proceso padre avisa a todos los esclavos que no hay mas archivos a procesar
 		for (int i = 0; i < CANT_PROC; i++){
 			write(pipeFds[(2*i)+1],"Bye",NAME_MAX);
 		}
 
 
-		//Cierro todos los extremos de escritura
+		//Se cierran los extremos de escritura de todos los PIPES
 		for (int i = 0; i < CANT_PROC; i++){
 			close(pipeFds[(2*i)+1]);
 		}
 
 		
-		//Padre espera la finalizacion de todos los esclavos
+		//El proceso padre espera la finalizacion de todos los esclavos
 		for(int i=0; i<CANT_PROC;i++){
 			if((wpid=wait(NULL))>=0){
 				printf("Proceso %d terminado\n",wpid);
 			}
 		}
 		
-		//Padre espera la finalizacion del HILO 1 E HILO 2
+		//El proceso padre espera la finalizacion de los HILOS 1 y 2
 		pthread_join(idThreadEsclavos,NULL);
 		pthread_join(idThreadVista,NULL);
 	
 
-		//detach from shared memory  
+		//Detach de los segmentos de memoria compartida 
 	    shmdt(sem_p); 
 	    shmdt(mutex);
 		shmdt(sem_c); 
 	    shmdt(data); 
-		//destroy the shared memory
+		//Se destruyen los segmentos de memoria compartida
 	    shmctl(shmid_sem_p,IPC_RMID,NULL);	 
 	    shmctl(shmid_mutex,IPC_RMID,NULL);
 	    shmctl(shmid_sem_c,IPC_RMID,NULL);
 		shmctl(shmid,IPC_RMID,NULL);
 
-	// Close the file
-	fclose(file_pointer); 
+		//Se cierra el archivo de salida
+		fclose(file_pointer); 
 	
 		printf("Fin\n");
 	}
@@ -287,7 +288,7 @@ char *calcularmd5(char *filename){
 
 
 
-void * funThreadEsclavos (void *parametro){
+void * thread_maneja_buffer (void *parametro){
 	char bufH[NAME_MAX];
 	int contador=0;
 
@@ -378,11 +379,11 @@ void * funThreadEsclavos (void *parametro){
 	//detach from shared memory 
 	shmdt(data); 
 
-		printf ("HILO 1: SIAMO AFORI\n");
+	printf ("HILO 1: SIAMO AFORI\n");
 }
 
 
-void * funThreadVistas (void *parametro){
+void * thread_espera_vista (void *parametro){
 	int fileDescriptorFifoView;
 	char id[50];
 
