@@ -377,6 +377,8 @@ void * funThreadEsclavos (void *parametro){
 
 	//detach from shared memory 
 	shmdt(data); 
+
+		printf ("HILO 1: SIAMO AFORI\n");
 }
 
 
@@ -396,7 +398,7 @@ void * funThreadVistas (void *parametro){
 	printf ("HILO 2: espera vista\n");
 	//Sem espera nueva vista
 	sem_wait(&sem_new_vista);
-	printf ("HILO 2: se ah detectado nueva vista\n");
+	printf ("HILO 2: se ha detectado nueva vista\n");
 	
 
 	//Recuperamos el id del segmento de memoria compartida
@@ -416,11 +418,11 @@ void * funThreadVistas (void *parametro){
 	//Lo escribimos en el named pipe
 	write(fileDescriptorFifoView, &shmid, sizeof(shmid));			
 
-	printf("Esperamos que termine vista\n");
+	printf("HILO 2: Esperamos que termine vista\n");
 	//Esperamos que termine la vista
 	sem_wait(&sem_fin_vista);
 
-	//close(fileDescriptorFifoView);
+	close(fileDescriptorFifoView);
 }
 
 

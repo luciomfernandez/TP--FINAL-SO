@@ -83,16 +83,21 @@ int main(int argc, char const *argv[]) {
     char buff[256];
 	while(1){
         
-        if(data[i%BUFFER_SIZE]=='\a'){
-        	break;
-        }
 
 
         sem_wait(sem_c);
         sem_wait(mutex);
+        
+
+        if(data[i%BUFFER_SIZE]=='\a'){
+            printf("LEI A, FIN: \n");
+            break;
+        }
+
+
         if(data[i%BUFFER_SIZE]=='\n'){
             buff[j]='\0';
-            printf("RECIBIDO: %s\n", buff);
+            printf("%s\n", buff);
             strcpy(buff,"");
             j=0;
         }else{
