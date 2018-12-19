@@ -277,6 +277,9 @@ char *calcularmd5(char *filename){
 	fp = popen(command, "r");
 	if (fp == NULL);
 	
+	//limpiamos variable
+	memset(hash,0,sizeof(hash));
+
 	//leo todo lo devuelto por el comando md5sum
 	while (fgets(pipedata, PIPE_BUF, fp) != NULL){
 		strcat(hash, pipedata);
