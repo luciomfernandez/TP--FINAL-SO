@@ -7,7 +7,7 @@
 	do
 	start_time="$(date -u +%s.%N)"
 
-	./procesoPadre /aplicaciones/filesIn/ /aplicaciones/filesOut/salida.txt i$ &
+	./procesoPadre /aplicaciones/filesIn/ /aplicaciones/filesOut/salida.txt $i &
 
 	process_id=$!;
 
