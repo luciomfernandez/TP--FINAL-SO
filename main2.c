@@ -27,10 +27,11 @@ void my_handler(int sig);
 void my_handler_2(int sig);
 
 
+//Cantidad de procesos esclavo
+int CANT_PROC;	
+
 //Pipe esclavos->padre, global para ser visto desde los threads
 int pipeEP[2];
-//Constantes globales
-static const int CANT_PROC=3;
 
 
 //Semaforos
@@ -67,8 +68,6 @@ void main(int argc, char const *argv[]){
 	pthread_t idThreadEsclavos;
 	pthread_t idThreadVista;
 
-	//Array de pipes (file descriptors)
-	int pipeFds[CANT_PROC*2];
 
 
 	//Se valida la entrada
@@ -77,10 +76,25 @@ void main(int argc, char const *argv[]){
         exit(EXIT_FAILURE);
     }
 
-		if(argv[2]==NULL){
+	if(argv[2]==NULL){
         perror("ERROR: Ingrese path para crear archivo con resultado de proceso");
         exit(EXIT_FAILURE);
     }
+
+
+	if(argv[3]==NULL){
+        perror("ERROR: Ingrese la cantidad de procesos esclavo");
+        exit(EXIT_FAILURE);
+    }
+
+
+    //Seteo CANT_PROC
+    sscanf(argv[3], "%d", &CANT_PROC);
+
+
+    //Array de pipes (file descriptors)
+	int pipeFds[CANT_PROC*2];
+
 
 	//Asigna output y abre archivo de salida para escritura
 	hashDataPath = (char *)argv[2];
